@@ -14,10 +14,6 @@ var verbose = flag.Bool("v", false, "show verbose progress message")
 // du  is a program that gets a list of directories from the command line
 // and traverse each one of them to return their total file size
 func main() {
-  var tick <-chan time.Time
-  if *verbose {
-    tick = time.Tick(500 * time.Millisecond)
-  }
 	flag.Parse()
 	roots := flag.Args()
 	if len(roots) == 0 {
@@ -33,12 +29,16 @@ func main() {
     n.Wait()
     close(fileSizes)
   }()
+  var tick <-chan time.Time
+  if *verbose {
+    tick = time.Tick(500 * time.Millisecond)
+  }
   var nFiles, filesize int64
 loop:
   for {
     select {
     case <-tick:
-      fmt.Printf("number of files: %d, size: %d", nFiles, filesize)
+      fmt.Printf("number of files: %d, size: %.1f GB\n", nFiles, float64(filesize)/1e9)
     case size, ok := <- fileSizes:
       if !ok {
         break loop // fileSizes was closed
@@ -47,10 +47,11 @@ loop:
       filesize += size
     }
   }
-  fmt.Printf("number of files: %d, size: %d", nFiles, filesize)
+  fmt.Printf("number of files: %d, size: %.1f GB\n", nFiles, float64(filesize)/1e9)
 }
 
 func parseDir(dir string, n *sync.WaitGroup, fileSizes chan int64) {
+  defer n.Done()
   for _, entry := range dirents(dir) {
     if entry.IsDir() {
       n.Add(1)
