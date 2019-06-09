@@ -11,6 +11,11 @@ import (
 )
 
 var verbose = flag.Bool("v", false, "show verbose progress message")
+
+type directory struct {
+  name string
+  size int64
+}
 // du  is a program that gets a list of directories from the command line
 // and traverse each one of them to return their total file size
 func main() {
@@ -19,11 +24,15 @@ func main() {
 	if len(roots) == 0 {
 		roots = []string{"."}
 	}
-  fileSizes := make(chan int64)
+  dirs := map[string]int64{
+    "." : 0,
+  }
+  fileSizes := make(chan directory)
   var n sync.WaitGroup
   for _, dir := range roots {
+    dirs[dir] = 0
     n.Add(1)
-    go parseDir(dir, &n, fileSizes)
+    go parseDir(dir, dir, &n, fileSizes)
   }
   go func() {
     n.Wait()
@@ -38,27 +47,35 @@ loop:
   for {
     select {
     case <-tick:
-      fmt.Printf("number of files: %d, size: %.1f GB\n", nFiles, float64(filesize)/1e9)
-    case size, ok := <- fileSizes:
+      fmt.Printf("number of files: %d counted, size: %.1f GB\n", nFiles, float64(filesize)/1e9)
+    case dirent, ok := <- fileSizes:
       if !ok {
         break loop // fileSizes was closed
       }
+      dirname := dirent.name
+      dirs[dirname] += dirent.size
       nFiles++
-      filesize += size
+      filesize += dirent.size
     }
   }
-  fmt.Printf("number of files: %d, size: %.1f GB\n", nFiles, float64(filesize)/1e9)
+  fmt.Printf("number of files: %d total, size: %.1f GB\n", nFiles, float64(filesize)/1e9)
+  for n, s := range dirs {
+    fmt.Printf("dir: %s, size: %.1f GB\n", n, float64(s)/1e9)
+  }
 }
 
-func parseDir(dir string, n *sync.WaitGroup, fileSizes chan int64) {
+func parseDir(maindir string, dir string, n *sync.WaitGroup, fileSizes chan directory) {
   defer n.Done()
   for _, entry := range dirents(dir) {
     if entry.IsDir() {
       n.Add(1)
       subdir := filepath.Join(dir, entry.Name())
-      parseDir(subdir, n, fileSizes)
+      parseDir(maindir, subdir, n, fileSizes)
     } else {
-      fileSizes <-entry.Size()
+      var direntry directory
+      direntry.name = maindir
+      direntry.size = entry.Size()
+      fileSizes <-direntry
     }
   }
 }
