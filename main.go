@@ -12,6 +12,8 @@ import (
 
 var verbose = flag.Bool("v", false, "show verbose progress message")
 
+var done = make(chan struct{})
+
 type directory struct {
   name string
   size int64
@@ -35,6 +37,10 @@ func main() {
     go parseDir(dir, dir, &n, fileSizes)
   }
   go func() {
+    os.Stdin.Read(make([]byte,1))
+    close(done)
+  }()
+  go func() {
     n.Wait()
     close(fileSizes)
   }()
@@ -46,6 +52,11 @@ func main() {
 loop:
   for {
     select {
+    case <-done:
+      for range fileSizes {
+        // do nothing
+      }
+      return
     case <-tick:
       fmt.Printf("number of files: %d counted, size: %.1f GB\n", nFiles, float64(filesize)/1e9)
     case dirent, ok := <- fileSizes:
@@ -64,8 +75,20 @@ loop:
   }
 }
 
+func cancelled() bool {
+  select {
+  case <-done:
+    return true
+  default:
+    return false
+  }
+}
+
 func parseDir(maindir string, dir string, n *sync.WaitGroup, fileSizes chan directory) {
   defer n.Done()
+  if cancelled() {
+    return
+  }
   for _, entry := range dirents(dir) {
     if entry.IsDir() {
       n.Add(1)
@@ -80,8 +103,16 @@ func parseDir(maindir string, dir string, n *sync.WaitGroup, fileSizes chan dire
   }
 }
 
+var sema = make(chan struct{}, 20) // concurrency-limiting counting semaphore
+
 // dirent return entries of directory dir
 func dirents (dir string) []os.FileInfo {
+  select {
+	case sema <- struct{}{}: // acquire token
+	case <-done:
+		return nil // cancelled
+	}
+	defer func() { <-sema }() // release token
   entries, err := ioutil.ReadDir(dir)
   if err != nil {
     fmt.Fprintf(os.Stderr, "du1: %v\n", err)
